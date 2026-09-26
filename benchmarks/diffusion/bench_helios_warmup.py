@@ -9,11 +9,13 @@ are diagnostic and should not be used for final latency comparisons.
 """
 
 import argparse
+import hashlib
 import json
 import sys
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 
 import vllm_omni
@@ -80,6 +82,7 @@ def main() -> None:
 
     prompt = {"prompt": args.prompt, "modalities": ["video"], "negative_prompt": ""}
     request_ms: list[float] = []
+    request_image_sha256: list[str] = []
     try:
         for request_index in range(args.repeats):
             sampling = OmniDiffusionSamplingParams(
@@ -105,6 +108,16 @@ def main() -> None:
             if not any(output.images for output in outputs):
                 raise RuntimeError("Helios returned no video frames")
             request_ms.append(elapsed_ms)
+            digest = hashlib.sha256()
+            for output in outputs:
+                for image in output.images:
+                    array = image.detach().cpu().numpy() if isinstance(image, torch.Tensor) else np.asarray(image)
+                    if array.dtype.hasobject:
+                        raise TypeError(f"Unsupported Helios image output: {type(image)!r}")
+                    digest.update(str(array.dtype).encode())
+                    digest.update(str(array.shape).encode())
+                    digest.update(np.ascontiguousarray(array).tobytes())
+            request_image_sha256.append(digest.hexdigest())
             del outputs
     finally:
         omni.shutdown()
@@ -122,6 +135,7 @@ def main() -> None:
         "startup_ms": startup_ms,
         "startup_plus_first_request_ms": startup_ms + request_ms[0],
         "request_ms": request_ms,
+        "request_image_sha256": request_image_sha256,
         "torch_version": torch.__version__,
         "vllm_omni_source": str(Path(vllm_omni.__file__).resolve()),
     }
