@@ -95,6 +95,23 @@ Saved generated video to helios_t2v_base.mp4
   - Helios-Mid: `--extra-body '{"is_enable_stage2": true, "pyramid_num_inference_steps_list": [20, 20, 20], "use_cfg_zero_star": true, "use_zero_init": true, "zero_steps": 1}'`
   - Helios-Distilled: `--extra-body '{"is_enable_stage2": true, "pyramid_num_inference_steps_list": [2, 2, 2], "is_amplify_first_chunk": true}'`
 
+#### Optional startup warmup shape
+
+The diffusion engine normally warms up at 512x512. If the served Helios workload
+uses a known resolution, you can explicitly warm up that shape instead:
+
+```bash
+vllm serve BestWishYsh/Helios-Distilled --omni --port 8098 \
+  --additional-config '{"diffusion_warmup_shape":{"height":384,"width":640}}'
+```
+
+`num_frames` can also be set in `diffusion_warmup_shape` when needed. This Helios-only
+option changes only the discarded startup request; it does not resize real requests.
+It does not enable the Distilled stage-2 path during warmup. Compare startup,
+first-request, and repeated-request times on the target workload before using
+it by default. Helios pads prompt embeddings to a fixed length, so prompt text
+length alone does not require separate warmup buckets.
+
 #### Known limitations
 
 - Helios generates video in 33-frame chunks. For best performance, set

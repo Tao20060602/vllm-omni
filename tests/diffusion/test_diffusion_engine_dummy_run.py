@@ -69,6 +69,69 @@ def test_dummy_run_uses_enough_steps_for_execution_mode(
     assert captured_requests[0].sampling_params.num_inference_steps == 2
 
 
+@pytest.mark.parametrize(
+    ("warmup_shape", "expected_shape"),
+    [
+        (None, (512, 512, 1)),
+        ({"height": 384, "width": 640}, (384, 640, 1)),
+        ({"height": 384, "width": 640, "num_frames": 33}, (384, 640, 33)),
+    ],
+)
+def test_dummy_run_uses_optional_warmup_shape(
+    monkeypatch: pytest.MonkeyPatch,
+    warmup_shape: dict[str, int] | None,
+    expected_shape: tuple[int, int, int],
+) -> None:
+    engine = DiffusionEngine.__new__(DiffusionEngine)
+    engine.od_config = SimpleNamespace(
+        model_class_name="HeliosPipeline",
+        diffusion_load_format="default",
+        additional_config={"diffusion_warmup_shape": warmup_shape},
+    )
+    monkeypatch.setattr("vllm_omni.diffusion.diffusion_engine.supports_multimodal_input", lambda _: (False, False))
+    monkeypatch.setattr("vllm_omni.diffusion.diffusion_engine.get_dummy_run_num_frames", lambda *_: 1)
+    engine.add_req_and_wait_for_response = Mock(return_value=SimpleNamespace(error=None))
+
+    engine._dummy_run()
+
+    request = engine.add_req_and_wait_for_response.call_args.args[0]
+    sampling = request.sampling_params
+    assert (sampling.height, sampling.width, sampling.num_frames) == expected_shape
+    assert sampling.num_inference_steps == 2
+    assert sampling.guidance_scale == 0.0
+    assert sampling.extra_args == {"cfg_text_scale": 1.0, "cfg_img_scale": 1.0}
+
+
+@pytest.mark.parametrize(
+    "warmup_shape",
+    [[], {"height": 0}, {"width": True}, {"num_frames": -1}, {"resolution": 384}],
+)
+def test_dummy_run_rejects_invalid_warmup_shape(warmup_shape: object) -> None:
+    engine = DiffusionEngine.__new__(DiffusionEngine)
+    engine.od_config = SimpleNamespace(
+        model_class_name="HeliosPipeline", additional_config={"diffusion_warmup_shape": warmup_shape}
+    )
+    engine.add_req_and_wait_for_response = Mock()
+
+    with pytest.raises((TypeError, ValueError), match="diffusion_warmup_shape"):
+        engine._dummy_run()
+
+    engine.add_req_and_wait_for_response.assert_not_called()
+
+
+def test_dummy_run_rejects_warmup_shape_for_other_models() -> None:
+    engine = DiffusionEngine.__new__(DiffusionEngine)
+    engine.od_config = SimpleNamespace(
+        model_class_name="other_model", additional_config={"diffusion_warmup_shape": {"num_frames": 33}}
+    )
+    engine.add_req_and_wait_for_response = Mock()
+
+    with pytest.raises(ValueError, match="only supported for HeliosPipeline"):
+        engine._dummy_run()
+
+    engine.add_req_and_wait_for_response.assert_not_called()
+
+
 def test_allgather_startup_runs_broadcast_dummy_request() -> None:
     engine = object.__new__(DiffusionEngine)
     engine.od_config = SimpleNamespace(

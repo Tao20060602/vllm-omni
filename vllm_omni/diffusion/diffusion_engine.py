@@ -11,7 +11,7 @@ import os
 import queue
 import threading
 import time
-from collections.abc import AsyncGenerator, Iterable
+from collections.abc import AsyncGenerator, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -1410,9 +1410,25 @@ class DiffusionEngine:
 
     def _dummy_run(self):
         """A dummy run to warm up the model."""
+        additional_config = getattr(self.od_config, "additional_config", {}) or {}
+        warmup_shape = additional_config.get("diffusion_warmup_shape")
+        if warmup_shape is None:
+            warmup_shape = {}
+        if not isinstance(warmup_shape, Mapping):
+            raise TypeError("diffusion_warmup_shape must be a mapping")
+        if warmup_shape and self.od_config.model_class_name != "HeliosPipeline":
+            raise ValueError("diffusion_warmup_shape is only supported for HeliosPipeline")
+        unknown_keys = set(warmup_shape) - {"height", "width", "num_frames"}
+        if unknown_keys:
+            raise ValueError(f"Unknown diffusion_warmup_shape keys: {sorted(unknown_keys)}")
+        for name, value in warmup_shape.items():
+            if type(value) is not int or value <= 0:
+                raise ValueError(f"diffusion_warmup_shape.{name} must be a positive integer")
+
         req = self._make_dummy_request(
-            height=512,
-            width=512,
+            height=warmup_shape.get("height", 512),
+            width=warmup_shape.get("width", 512),
+            num_frames=warmup_shape.get("num_frames"),
             guidance_scale=0.0,
             # Dummy warmup must exercise at least one denoising iteration in
             # every execution mode. Some pipelines (for example BAGEL) perform
