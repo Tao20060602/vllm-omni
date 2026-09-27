@@ -11,6 +11,7 @@ are diagnostic and should not be used for final latency comparisons.
 import argparse
 import hashlib
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -128,6 +129,9 @@ def main() -> None:
         "width": args.width,
         "num_frames": args.num_frames,
         "num_inference_steps": args.num_inference_steps,
+        "is_enable_stage2": True,
+        "pyramid_num_inference_steps_list": [2, 2, 2],
+        "is_amplify_first_chunk": True,
         "guidance_scale": args.guidance_scale,
         "seed": args.seed,
         "enforce_eager": args.enforce_eager,
@@ -137,6 +141,7 @@ def main() -> None:
         "request_ms": request_ms,
         "request_image_sha256": request_image_sha256,
         "torch_version": torch.__version__,
+        "torch_logs": os.environ.get("TORCH_LOGS", ""),
         "vllm_omni_source": str(Path(vllm_omni.__file__).resolve()),
     }
     payload = json.dumps(result, indent=2)
