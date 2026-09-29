@@ -1298,6 +1298,15 @@ class DiffusionEngine:
             self.close()
             raise
 
+        additional_config = getattr(self.od_config, "additional_config", None) or {}
+        if "helios_vae_warmup_profiles" in additional_config:
+            try:
+                self.collective_rpc(method="run_helios_vae_warmup")
+            except Exception as e:
+                logger.error(f"Helios VAE warmup failed: {e}")
+                self.close()
+                raise
+
     def _make_dummy_request(
         self,
         *,
