@@ -25,11 +25,13 @@ def test_observation_conditioned_startup_skips_generic_warmup(model_class_name: 
     engine.od_config.model_class_name = model_class_name
     engine.od_config.diffusion_load_format = "default"
     engine.add_req_and_wait_for_response = Mock(side_effect=AssertionError("generic text warmup submitted"))
+    engine.collective_rpc = Mock()
     engine.close = Mock()
 
     engine.run_startup_warmup()
 
     engine.add_req_and_wait_for_response.assert_not_called()
+    engine.collective_rpc.assert_not_called()
     engine.close.assert_not_called()
 
 
@@ -69,6 +71,39 @@ def test_dummy_run_uses_enough_steps_for_execution_mode(
     assert captured_requests[0].sampling_params.num_inference_steps == 2
 
 
+def test_startup_runs_vae_warmup_after_generic_dummy():
+    events = []
+    engine = object.__new__(DiffusionEngine)
+    engine.od_config = SimpleNamespace(
+        additional_config={"helios_vae_warmup_profiles": [{"height": 384, "width": 640}]}
+    )
+    engine._dummy_run = lambda: events.append("dummy_run")
+    engine.collective_rpc = Mock(side_effect=lambda method: events.append("vae_warmup"))
+    engine.close = Mock()
+
+    engine.run_startup_warmup()
+
+    assert events == ["dummy_run", "vae_warmup"]
+    engine.collective_rpc.assert_called_once_with(method="run_helios_vae_warmup")
+    engine.close.assert_not_called()
+
+
+def test_startup_skips_vae_warmup_when_generic_dummy_fails():
+    engine = object.__new__(DiffusionEngine)
+    engine.od_config = SimpleNamespace(
+        additional_config={"helios_vae_warmup_profiles": [{"height": 384, "width": 640}]}
+    )
+    engine._dummy_run = Mock(side_effect=RuntimeError("dummy failed"))
+    engine.collective_rpc = Mock()
+    engine.close = Mock()
+
+    with pytest.raises(RuntimeError, match="dummy failed"):
+        engine.run_startup_warmup()
+
+    engine.collective_rpc.assert_not_called()
+    engine.close.assert_called_once_with()
+
+
 def test_allgather_startup_runs_broadcast_dummy_request() -> None:
     engine = object.__new__(DiffusionEngine)
     engine.od_config = SimpleNamespace(
@@ -80,10 +115,12 @@ def test_allgather_startup_runs_broadcast_dummy_request() -> None:
         parallel_config=SimpleNamespace(data_parallel_size=2, sequence_parallel_size=1),
     )
     engine._dummy_run = Mock()
+    engine.collective_rpc = Mock()
 
     engine.run_startup_warmup()
 
     engine._dummy_run.assert_called_once_with()
+    engine.collective_rpc.assert_not_called()
 
 
 def test_dummy_run_num_frames_uses_explicit_model_setting(monkeypatch: pytest.MonkeyPatch) -> None:
