@@ -11,7 +11,9 @@ from vllm_omni.diffusion.data import OmniDiffusionConfig
 from vllm_omni.diffusion.diffusion_engine import DiffusionEngine, DiffusionExecutionMode
 from vllm_omni.diffusion.diffusion_kv.config import DiffusionKVCacheMode
 from vllm_omni.diffusion.diffusion_kv.request import DiffusionKVRequest
+from vllm_omni.diffusion.models.helios.pipeline_helios import HeliosPipeline
 from vllm_omni.diffusion.request import OmniDiffusionRequest
+from vllm_omni.diffusion.worker.diffusion_model_runner import DiffusionModelRunner
 from vllm_omni.inputs.data import OmniDiffusionSamplingParams
 
 pytestmark = [pytest.mark.core_model, pytest.mark.cpu, pytest.mark.diffusion]
@@ -87,19 +89,63 @@ def test_startup_runs_vae_warmup_after_generic_dummy():
     engine.close.assert_not_called()
 
 
-def test_startup_skips_vae_warmup_when_profiles_are_not_configured():
+@pytest.mark.parametrize(
+    "additional_config",
+    [
+        pytest.param({}, id="missing"),
+        pytest.param({"helios_vae_warmup_profiles": None}, id="none"),
+        pytest.param({"helios_vae_warmup_profiles": []}, id="empty-list"),
+        pytest.param({"helios_vae_warmup_profiles": ()}, id="empty-tuple"),
+    ],
+)
+def test_startup_skips_vae_warmup_when_profiles_are_disabled(additional_config: dict[str, object], mocker) -> None:
     engine = object.__new__(DiffusionEngine)
     engine.od_config = OmniDiffusionConfig.__new__(OmniDiffusionConfig)
-    engine.od_config.additional_config = {}
-    engine._dummy_run = Mock()
-    engine.collective_rpc = Mock()
-    engine.close = Mock()
+    engine.od_config.additional_config = additional_config
+    engine._dummy_run = mocker.Mock()
+    engine.collective_rpc = mocker.Mock()
+    engine.close = mocker.Mock()
 
     engine.run_startup_warmup()
 
     engine._dummy_run.assert_called_once_with()
     engine.collective_rpc.assert_not_called()
     engine.close.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "profiles",
+    [
+        pytest.param({}, id="empty-mapping"),
+        pytest.param("", id="empty-string"),
+        pytest.param(b"", id="empty-bytes"),
+        pytest.param(False, id="false"),
+        pytest.param(0, id="zero"),
+        pytest.param("384x640", id="string"),
+    ],
+)
+def test_startup_malformed_profiles_reach_pipeline_validation(profiles: object, mocker) -> None:
+    engine = object.__new__(DiffusionEngine)
+    engine.od_config = OmniDiffusionConfig.__new__(OmniDiffusionConfig)
+    engine.od_config.additional_config = {"helios_vae_warmup_profiles": profiles}
+    engine._dummy_run = mocker.Mock()
+    engine.close = mocker.Mock()
+    runner = object.__new__(DiffusionModelRunner)
+    runner.od_config = engine.od_config
+    runner.pipeline = object.__new__(HeliosPipeline)
+
+    def run_warmup(method: str) -> None:
+        assert method == "run_helios_vae_warmup"
+        runner.run_helios_vae_warmup()
+
+    engine.collective_rpc = mocker.Mock(side_effect=run_warmup)
+
+    with pytest.raises(TypeError, match="helios_vae_warmup_profiles must be a sequence of profile mappings"):
+        engine.run_startup_warmup()
+
+    engine._dummy_run.assert_called_once_with()
+    engine.collective_rpc.assert_called_once_with(method="run_helios_vae_warmup")
+    engine.close.assert_called_once_with()
 
 
 def test_startup_skips_vae_warmup_when_generic_dummy_fails():

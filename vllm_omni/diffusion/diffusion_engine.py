@@ -11,7 +11,7 @@ import os
 import queue
 import threading
 import time
-from collections.abc import AsyncGenerator, Iterable
+from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -1299,13 +1299,18 @@ class DiffusionEngine:
             raise
 
         additional_config = getattr(self.od_config, "additional_config", None) or {}
-        if "helios_vae_warmup_profiles" in additional_config:
-            try:
-                self.collective_rpc(method="run_helios_vae_warmup")
-            except Exception as e:
-                logger.error(f"Helios VAE warmup failed: {e}")
-                self.close()
-                raise
+        profiles = additional_config.get("helios_vae_warmup_profiles")
+        if profiles is None or (
+            isinstance(profiles, Sequence) and not isinstance(profiles, (str, bytes, Mapping)) and not profiles
+        ):
+            return
+
+        try:
+            self.collective_rpc(method="run_helios_vae_warmup")
+        except Exception as e:
+            logger.error(f"Helios VAE warmup failed: {e}")
+            self.close()
+            raise
 
     def _make_dummy_request(
         self,
