@@ -9,6 +9,7 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from pytest_mock import MockerFixture
 
 import vllm_omni.diffusion.models.helios.pipeline_helios as pipeline_module
 from vllm_omni.diffusion.data import OmniDiffusionConfig
@@ -169,14 +170,14 @@ def test_warmup_preserves_allocation_error(monkeypatch: pytest.MonkeyPatch, succ
     error = torch.OutOfMemoryError("warmup allocation failed")
     zeros = torch.zeros
     calls = 0
-    monkeypatch.setattr(pipeline_module, "current_omni_platform", SimpleNamespace(is_available=lambda: False))
+    monkeypatch.setattr(pipeline_module.current_omni_platform, "is_available", lambda: False)
 
-    def failing_zeros(*args: Any, **kwargs: Any) -> torch.Tensor:
+    def failing_zeros(shape: tuple[int, ...], *, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         nonlocal calls
         if calls == successful_profiles:
             raise error
         calls += 1
-        return zeros(*args, **kwargs)
+        return zeros(shape, device=device, dtype=dtype)
 
     monkeypatch.setattr(torch, "zeros", failing_zeros)
 
@@ -191,12 +192,12 @@ def test_warmup_preserves_decode_error(monkeypatch: pytest.MonkeyPatch, successf
     pipeline = _pipeline()
     error = RuntimeError("warmup decode failed")
     decode = pipeline.vae.decode
-    monkeypatch.setattr(pipeline_module, "current_omni_platform", SimpleNamespace(is_available=lambda: False))
+    monkeypatch.setattr(pipeline_module.current_omni_platform, "is_available", lambda: False)
 
-    def failing_decode(*args: Any, **kwargs: Any):
+    def failing_decode(latents: torch.Tensor, *, return_dict: bool) -> tuple[_DecodedOutput]:
         if len(pipeline.vae.shapes) == successful_profiles:
             raise error
-        return decode(*args, **kwargs)
+        return decode(latents, return_dict=return_dict)
 
     monkeypatch.setattr(pipeline.vae, "decode", failing_decode)
 
@@ -209,17 +210,14 @@ def test_warmup_preserves_decode_error(monkeypatch: pytest.MonkeyPatch, successf
 @pytest.mark.parametrize("successful_profiles", [0, 1], ids=["first-profile", "second-profile"])
 @pytest.mark.parametrize("sync_call", [1, 2], ids=["before-decode", "after-decode"])
 def test_warmup_preserves_synchronization_error(
-    monkeypatch: pytest.MonkeyPatch, successful_profiles: int, sync_call: int
+    monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture, successful_profiles: int, sync_call: int
 ) -> None:
     pipeline = _pipeline()
     error = RuntimeError("warmup synchronization failed")
     successful_syncs = successful_profiles * 2 + sync_call - 1
-    synchronize = Mock(side_effect=[None] * successful_syncs + [error])
-    monkeypatch.setattr(
-        pipeline_module,
-        "current_omni_platform",
-        SimpleNamespace(is_available=lambda: True, synchronize=synchronize),
-    )
+    synchronize = mocker.Mock(side_effect=[None] * successful_syncs + [error])
+    monkeypatch.setattr(pipeline_module.current_omni_platform, "is_available", lambda: True)
+    monkeypatch.setattr(pipeline_module.current_omni_platform, "synchronize", synchronize)
 
     with pytest.raises(RuntimeError) as exc_info:
         pipeline.warmup_vae_profiles([{"height": 384, "width": 640}, {"height": 640, "width": 384}])
