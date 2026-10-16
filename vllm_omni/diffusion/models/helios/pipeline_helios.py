@@ -1773,15 +1773,15 @@ class HeliosPipeline(
                     if getattr(current_omni_platform, "is_available", lambda: False)():
                         current_omni_platform.synchronize()
                     elapsed = time.perf_counter() - profile_started
+                logger.info(
+                    "Helios VAE warmup: request profile=%dx%d latent_shape=%s elapsed=%.3fs",
+                    height,
+                    width,
+                    latent_shape,
+                    elapsed,
+                )
             finally:
                 del output, latents
-            logger.info(
-                "Helios VAE warmup: request profile=%dx%d latent_shape=%s elapsed=%.3fs",
-                height,
-                width,
-                latent_shape,
-                elapsed,
-            )
 
         logger.info(
             "Helios VAE warmup total: %d profiles elapsed=%.3fs",
